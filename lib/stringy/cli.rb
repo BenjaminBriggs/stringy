@@ -1,23 +1,45 @@
 #!/usr/bin/env ruby
 
+require 'thread'
+require 'fileutils'
 require 'thor'
+
+Thread.abort_on_exception = true
 
 module Stringy
   class CLI < Thor
+    class_option :verbose, :type => :boolean, :aliases => "-v"
 
-    desc "update", "The main call that starts the stringification process"
+    method_option :overwrite, :type => :boolean, :aliases => "-o"
+    desc "update -v -o", "Updates then base stings and optionaly overwrites the tranlations"
     def update()
-      puts "Wrong Directory" unless Dir.exists?("Base.lproj")
-
-        @current_directory = Dir.pwd
+      puts "Wrong directory please select the directory that contains the Base.lproj folder" unless Dir.exists?("Base.lproj")
+  
+        if !options[:verbose] then
+          Thread.new do
+            #set up spinner
+            glyphs = ['|', '/', '-', "\\"]
+            while true
+              glyphs.each do |g|
+                print "\r#{g}"
+                sleep 0.15
+              end
+            end
+          end
+        end
+        
+        warningSuppressor = options[:verbose]? "" : " > /dev/null 2>&1"
 
         # Run Genstrings
-        system('find ./ -name "*.m" -o -name "*.mm" -print0 | xargs -0 genstrings -o Base.lproj')
+        puts "running genstrings" if options[:verbose]
+        system('find ./ -name "*.m" -o -name "*.mm" -print0 | xargs -0 genstrings -o Base.lproj'+warningSuppressor)
 
         # Set up some extentions
         storyboardExt = ".storyboard"
         stringsExt = ".strings"
         localeDirExt = ".lproj"
+
+        newStringsExt=".strings.new"
 
         isNewStringsFile = false
 
@@ -27,60 +49,64 @@ module Stringy
           # Create the base path (eg. settings)
           baseStringsPath = storyboardPath.chomp(File.extname(storyboardPath)) + stringsExt
 
-            # Check if it exists
-            if Dir.exists?(baseStringsPath) then
-              isNewStringsFile = false
-            else
-              # If it we need to create the file.
-              puts baseStringsPath + " file doesn't exist; create"
+          puts "" if options[:verbose]
+          puts "Starting " + baseStringsPath if options[:verbose]
 
-              system('ibtool --export-strings-file', baseStringsPath ,storyboardPath)
+          # Check if it exists
+          if File.file?(baseStringsPath)
+            isNewStringsFile = false
+          else
+            # If it we need to create the file.
+            puts baseStringsPath + " file doesn't exist; create" if options[:verbose]
+            puts "Running: ibtool --export-strings-file #{baseStringsPath.chomp} #{storyboardPath.chomp}" if options[:verbose]
+            system("ibtool --export-strings-file #{baseStringsPath.chomp} #{storyboardPath.chomp}"+warningSuppressor)
 
-              isNewStringsFile = true
-            end
+            puts baseStringsPath + " file created" if options[:verbose]
+
+            isNewStringsFile = true
+          end
 
           # Create strings file only when storyboard file newer and not just been created
-          if isNewStringsFile || `find #{storyboardPath} -prune -newer #{baseStringsPath} -print | grep -q .` then
+          if isNewStringsFile || `find #{storyboardPath.chomp} -prune -newer #{baseStringsPath.chomp} -print | grep -q .` then
 
-            puts storyboardPath + " is modified; update " + baseStringsPath
+            puts storyboardPath + " is modified; update " + baseStringsPath if options[:verbose]
 
             # Get storyboard file name and folder
             storyboardDir = File.dirname(storyboardPath)
 
             # Get New Base strings file full path and strings file name
-            newBaseStringsPath = `echo "#{storyboardPath}" | sed "s/#{storyboardExt}/#{newStringsExt}/"`
+            newBaseStringsPath = `echo "#{storyboardPath}" | sed "s/#{storyboardExt}/#{newStringsExt}/"`.chomp
             stringsFile = File.basename(baseStringsPath)
 
-            system('ibtool --export-strings-file', newBaseStringsPath ,storyboardPath)
+            if isNewStringsFile == false
+              puts "Running: ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}" if options[:verbose]
+              system("ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}"+warningSuppressor)
 
-            system('iconv -f UTF-16 -t UTF-8', newBaseStringsPath, '>', baseStringsPath)
+              puts "Running: iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}" if options[:verbose]
+              system("iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}"+warningSuppressor)
+            end
 
-            Dir.rmdir(newBaseStringsPath)
+            FileUtils.rm(newBaseStringsPath) if File.exists?(newBaseStringsPath)
 
-            # Get all locale strings folder
-            Dir.glob("*#{localeDirExt}") do |localeStringsDir|
+            if options[:overwrite] then
+              # Get all locale strings folder
+              Dir.glob("*#{localeDirExt}") do |localeStringsDir|
 
-              # Skip Base strings folder
-              if localeStringsDir != storyboardDir then
-                localeStringsPath = localeStringsDir+"/"+stringsFile
+                # Skip Base strings folder
+                if localeStringsDir != storyboardDir
 
-                # Just copy base strings file on first time
-                if !Dir.exists?(localeStringsPath) then
+                  localeStringsPath = localeStringsDir+"/"+stringsFile
+
+                  puts "Move strings file in " + localeStringsDir if options[:verbose]
+                  FileUtils.mkdir_p(File.dirname(localeStringsPath))
                   FileUtils.cp(baseStringsPath, localeStringsPath)
-                else
-                  oldLocaleStringsPath= `echo "#{localeStringsPath}" | sed "s/#{stringsExt}/#{oldStringsExt}/"`
-                  FileUtils.cp(localeStringsPath, oldLocaleStringsPath)
-
-                  # Merge baseStringsPath to localeStringsPath
-                  system(awk, 'NR == FNR && /^\/\*/ {x=$0; getline; a[x]=$0; next} /^\/\*/ {x=$0; print; getline; $0=a[x]?a[x]:$0; printf $0"\n\n"}', oldLocaleStringsPath, baseStringsPath, '>', localeStringsPath)
-
-                  Dir.rmdir(oldLocaleStringsPath)
                 end
               end
             end
           end
       end
+      
+      puts "" if !options[:verbose]
     end
   end
 end
-
