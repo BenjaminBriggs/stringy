@@ -13,8 +13,12 @@ module Stringy
     method_option :overwrite, :type => :boolean, :aliases => "-o"
     desc "update -v -o", "Updates then base stings and optionaly overwrites the tranlations"
     def update()
-      puts "Wrong directory please select the directory that contains the Base.lproj folder" unless Dir.exists?("Base.lproj")
-  
+      
+      if !Dir.exists?("Base.lproj")    
+        puts "Wrong directory please select the directory that contains the Base.lproj folder" 
+        return
+      end
+      
         if !options[:verbose] then
           Thread.new do
             #set up spinner
