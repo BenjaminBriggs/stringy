@@ -9,6 +9,7 @@ Thread.abort_on_exception = true
 module Stringy
   class CLI < Thor
     class_option :verbose, :type => :boolean, :aliases => "-v"
+    class_option :force, :type => :boolean, :aliases => "-f"
 
     method_option :overwrite, :type => :boolean, :aliases => "-o"
     desc "update -v -o", "Updates then base stings and optionaly overwrites the tranlations"
@@ -40,15 +41,14 @@ module Stringy
 
         # Set up some extentions
         storyboardExt = ".storyboard"
+        xibExt = ".xib"
         stringsExt = ".strings"
         localeDirExt = ".lproj"
 
-        newStringsExt=".strings.new"
-
-        isNewStringsFile = false
+        newStringsExt=".new"
 
         # Loop the storyboards in base
-        Dir.glob("Base.lproj/*#{storyboardExt}") do |storyboardPath|
+        Dir.glob("Base.lproj/*{#{storyboardExt},#{xibExt}}") do |storyboardPath|
 
           # Create the base path (eg. settings)
           baseStringsPath = storyboardPath.chomp(File.extname(storyboardPath)) + stringsExt
@@ -57,39 +57,34 @@ module Stringy
           puts "Starting " + baseStringsPath if options[:verbose]
 
           # Check if it exists
-          if File.file?(baseStringsPath)
-            isNewStringsFile = false
+          stringFileIsMissing = !File.file?(baseStringsPath)
+          if !stringFileIsMissing
+            storyboardIsNewer = File.mtime(storyboardPath) > File.mtime(baseStringsPath)
           else
-            # If it we need to create the file.
-            puts baseStringsPath + " file doesn't exist; create" if options[:verbose]
-            puts "Running: ibtool --export-strings-file #{baseStringsPath.chomp} #{storyboardPath.chomp}" if options[:verbose]
-            system("ibtool --export-strings-file #{baseStringsPath.chomp} #{storyboardPath.chomp}"+warningSuppressor)
-
-            puts baseStringsPath + " file created" if options[:verbose]
-
-            isNewStringsFile = true
+            storyboardIsNewer = false
           end
 
-          # Create strings file only when storyboard file newer and not just been created
-          if isNewStringsFile || `find #{storyboardPath.chomp} -prune -newer #{baseStringsPath.chomp} -print | grep -q .` then
+          puts "String file is missing" if options[:verbose] && stringFileIsMissing
+          puts "Storyboard is newer" if options[:verbose] && storyboardIsNewer
 
-            puts storyboardPath + " is modified; update " + baseStringsPath if options[:verbose]
+          # Create strings file only when storyboard file newer and not just been created
+          if options[:force] || stringFileIsMissing || storyboardIsNewer then
+
+            puts "Updating " + baseStringsPath if options[:verbose]
 
             # Get storyboard file name and folder
             storyboardDir = File.dirname(storyboardPath)
 
             # Get New Base strings file full path and strings file name
-            newBaseStringsPath = `echo "#{storyboardPath}" | sed "s/#{storyboardExt}/#{newStringsExt}/"`.chomp
             stringsFile = File.basename(baseStringsPath)
+            newBaseStringsPath = "#{storyboardDir}/#{stringsFile}#{newStringsExt}"
 
-            if isNewStringsFile == false
-              puts "Running: ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}" if options[:verbose]
-              system("ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}"+warningSuppressor)
+            puts "Running: ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}" if options[:verbose]
+            system("ibtool --export-strings-file #{newBaseStringsPath.chomp} #{storyboardPath.chomp}"+warningSuppressor)
 
-              puts "Running: iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}" if options[:verbose]
-              system("iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}"+warningSuppressor)
-            end
-
+            puts "Running: iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}" if options[:verbose]
+            system("iconv -f UTF-16 -t UTF-8 #{newBaseStringsPath.chomp} > #{baseStringsPath.chomp}")
+            
             FileUtils.rm(newBaseStringsPath) if File.exists?(newBaseStringsPath)
 
             if options[:overwrite] then
@@ -101,16 +96,18 @@ module Stringy
 
                   localeStringsPath = localeStringsDir+"/"+stringsFile
 
-                  puts "Move strings file in " + localeStringsDir if options[:verbose]
+                  puts "Move strings file in " + localeStringsPath if options[:verbose]
                   FileUtils.mkdir_p(File.dirname(localeStringsPath))
                   FileUtils.cp(baseStringsPath, localeStringsPath)
                 end
               end
             end
+          else
+            puts "No action needed" if options[:verbose]
           end
       end
       
-      puts "" if !options[:verbose]
+      puts "" #just to add a line for formating
     end
   end
 end
